@@ -3,7 +3,7 @@ import 'dart:async';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-
+import 'package:flutter_tts/flutter_tts.dart';
 import '../models/detection.dart';
 import '../services/api_service.dart';
 
@@ -15,6 +15,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final FlutterTts _flutterTts = FlutterTts();
   final ApiService _apiService = ApiService();
 
   CameraController? _cameraController;
@@ -90,6 +91,13 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  
+  Future<void> _speakAlert(String message) async {
+    await _flutterTts.stop();
+    await _flutterTts.speak(message);
+  }
+
+  
   Future<void> _processFrame() async {
     final controller = _cameraController;
 
@@ -104,14 +112,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final image = await controller.takePicture();
-      final results = await _apiService.detectObjects(image);
+      final response = await _apiService.detectObjects(image);
 
       if (!mounted) return;
 
       setState(() {
-        _detections = results;
+        _detections = response.detections;
         _error = null;
       });
+      if (response.alerts.isNotEmpty && _scanning) {
+      await _speakAlert(response.alerts.first);
+      }
     } catch (e) {
       if (!mounted) return;
 
@@ -126,6 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _flutterTts.setLanguage("en-US");
     _initializeCamera();
   }
 
@@ -197,7 +209,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: Text(d.className),
                           subtitle: Text(
                             'Confidence: '
-                            '${(d.confidence * 100).toStringAsFixed(1)}%',
+                            '${(d.confidence * 100).toStringAsFixed(1)}%'
+                            '${d.priority == null ? "" : "\nPriority: ${d.priority}"}'
+                            '${d.position == null ? "" : " • ${d.position}"}',
                           ),
                         );
                       },
