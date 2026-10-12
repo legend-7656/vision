@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from detection.detector import ObjectDetector
 from context.context_engine import analyze_context
 from priority.priority_engine import create_alerts
+from ocr.ocr_engine import OCREngine
 
 app = FastAPI(title="ContextAid API")
 app.add_middleware(
@@ -16,7 +17,7 @@ app.add_middleware(
 )
 
 detector = ObjectDetector()
-
+ocr_engine = OCREngine()
 
 @app.get("/")
 def root():
@@ -36,6 +37,8 @@ async def detect(file: UploadFile = File(...)):
     ).convert("RGB")
 
     image_width, image_height = image.size
+
+    recognized_text = ocr_engine.read_text(image)
 
     raw_detections = detector.detect(image)
 
@@ -60,4 +63,6 @@ async def detect(file: UploadFile = File(...)):
         },
         "detections": detections,
         "alerts": alerts,
+    
+    "recognized_text": recognized_text,
     }
