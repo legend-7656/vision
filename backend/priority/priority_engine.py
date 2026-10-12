@@ -1,11 +1,10 @@
 
 import time
 
-# Per-process memory for a simple alert cooldown.
+# Track-aware alert cooldown memory.
 _last_alert_time = {}
 ALERT_COOLDOWN_SECONDS = 5
 
-# Initial experimental rules, not a validated safety classifier.
 HIGH_PRIORITY = {
     "car",
     "truck",
@@ -25,6 +24,7 @@ MEDIUM_PRIORITY = {
     "traffic light",
 }
 
+
 def prioritize_detection(detection):
     name = detection["class_name"].lower()
     confidence = detection["confidence"]
@@ -40,8 +40,6 @@ def prioritize_detection(detection):
     else:
         priority = "low"
 
-    # A large object near the center may warrant more attention,
-    # but this does not establish collision risk.
     if size == "large" and position == "center" and confidence >= 0.5:
         if priority == "medium":
             priority = "high"
@@ -66,13 +64,21 @@ def create_alerts(detections):
         if detection["priority"] == "low":
             continue
 
-        # Cooldown is per class and approximate position.
-        key = (
-            detection["class_name"],
-            detection["position"],
-        )
+        track_id = detection.get("track_id")
+
+        if track_id is not None:
+            # Separate cooldowns for distinct tracked objects.
+            key = ("track", track_id)
+        else:
+            # Fallback when the tracker cannot assign an ID.
+            key = (
+                "class_position",
+                detection["class_name"],
+                detection["position"],
+            )
 
         previous = _last_alert_time.get(key, 0)
+
         if now - previous < ALERT_COOLDOWN_SECONDS:
             continue
 
@@ -81,6 +87,7 @@ def create_alerts(detections):
         alerts.append({
             "object": detection["class_name"],
             "priority": detection["priority"],
+            "track_id": track_id,
             "message": (
                 f"{detection['class_name']} "
                 f"on your {detection['position']}"

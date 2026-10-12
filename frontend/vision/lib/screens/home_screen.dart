@@ -17,6 +17,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FlutterTts _flutterTts = FlutterTts();
   final ApiService _apiService = ApiService();
+  final Map<String, DateTime> _spokenAlerts = {};
 
   CameraController? _cameraController;
   Timer? _timer;
@@ -92,10 +93,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   
+  
   Future<void> _speakAlert(String message) async {
-    await _flutterTts.stop();
+    final now = DateTime.now();
+    final lastSpoken = _spokenAlerts[message];
+
+    // Don't repeat the same alert within 10 seconds.
+    if (lastSpoken != null &&  now.difference(lastSpoken).inSeconds < 10) {
+    return;
+    }
+
+    _spokenAlerts[message] = now;
+
     await _flutterTts.speak(message);
   }
+
 
   
   Future<void> _processFrame() async {
@@ -211,7 +223,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             'Confidence: '
                             '${(d.confidence * 100).toStringAsFixed(1)}%'
                             '${d.priority == null ? "" : "\nPriority: ${d.priority}"}'
-                            '${d.position == null ? "" : " • ${d.position}"}',
+                            '${d.position == null ? "" : " • ${d.position}"}'
+                            '${d.trackId == null ? "" : "\nTrack ID: ${d.trackId}"}',
                           ),
                         );
                       },

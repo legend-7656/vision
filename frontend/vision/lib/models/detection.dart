@@ -5,6 +5,7 @@ class Detection {
   final List<double> bbox;
   final String? position;
   final String? priority;
+  final int? trackId;
 
   Detection({
     required this.classId,
@@ -13,6 +14,7 @@ class Detection {
     required this.bbox,
     this.position,
     this.priority,
+    this.trackId,
   });
 
   factory Detection.fromJson(Map<String, dynamic> json) {
@@ -27,6 +29,7 @@ class Detection {
       ),
       position: json['position'] as String?,
       priority: json['priority'] as String?,
+      trackId: json['track_id'] as int?,
     );
   }
 }
