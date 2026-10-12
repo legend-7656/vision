@@ -3,7 +3,8 @@ from PIL import Image
 from io import BytesIO
 from fastapi.middleware.cors import CORSMiddleware
 from detection.detector import ObjectDetector
-
+from context.context_engine import analyze_context
+from priority.priority_engine import create_alerts
 
 app = FastAPI(title="ContextAid API")
 app.add_middleware(
@@ -25,18 +26,38 @@ def root():
     }
 
 
+
 @app.post("/detect")
 async def detect(file: UploadFile = File(...)):
-
     image_bytes = await file.read()
 
     image = Image.open(
         BytesIO(image_bytes)
     ).convert("RGB")
 
-    detections = detector.detect(image)
+    image_width, image_height = image.size
+
+    raw_detections = detector.detect(image)
+
+    contextual_detections = [
+        analyze_context(
+            detection,
+            image_width,
+            image_height,
+        )
+        for detection in raw_detections
+    ]
+
+    detections, alerts = create_alerts(
+        contextual_detections
+    )
 
     return {
         "filename": file.filename,
-        "detections": detections
+        "image_size": {
+            "width": image_width,
+            "height": image_height,
+        },
+        "detections": detections,
+        "alerts": alerts,
     }

@@ -1,6 +1,8 @@
+
+import 'dart:async';
+
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:typed_data';
 
 import '../models/detection.dart';
 import '../services/api_service.dart';
@@ -13,64 +15,131 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final ImagePicker _picker = ImagePicker();
   final ApiService _apiService = ApiService();
 
-  XFile? _image;
+  CameraController? _cameraController;
+  Timer? _timer;
+
   List<Detection> _detections = [];
-
-  bool _isLoading = false;
   String? _error;
+  bool _initializing = true;
+  bool _scanning = false;
+  bool _processing = false;
 
-  Future<void> _captureImage() async {
+  Future<void> _initializeCamera() async {
     try {
-      final XFile? image = await _picker.pickImage(
-        source: ImageSource.camera,
+      final cameras = await availableCameras();
+
+      if (cameras.isEmpty) {
+        throw Exception('No camera was found.');
+      }
+
+      final controller = CameraController(
+        cameras.first,
+        ResolutionPreset.medium,
+        enableAudio: false,
       );
 
-      if (image == null) {
+      await controller.initialize();
+
+      if (!mounted) {
+        await controller.dispose();
         return;
       }
 
       setState(() {
-        _image = image;
-        _detections = [];
-        _error = null;
+        _cameraController = controller;
+        _initializing = false;
       });
 
-      await _runDetection(image);
+      _startScanning();
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
-        _error = e.toString();
+        _error = 'Camera initialization failed: $e';
+        _initializing = false;
       });
     }
   }
 
-  Future<void> _runDetection(XFile image) async {
+  void _startScanning() {
+    if (_cameraController == null || _scanning) return;
+
     setState(() {
-      _isLoading = true;
+      _scanning = true;
       _error = null;
     });
 
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 1500),
+      (_) => _processFrame(),
+    );
+
+    _processFrame();
+  }
+
+  void _stopScanning() {
+    _timer?.cancel();
+    _timer = null;
+
+    if (!mounted) return;
+
+    setState(() {
+      _scanning = false;
+    });
+  }
+
+  Future<void> _processFrame() async {
+    final controller = _cameraController;
+
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _processing ||
+        !_scanning) {
+      return;
+    }
+
+    _processing = true;
+
     try {
-      final detections = await _apiService.detectObjects(image);
+      final image = await controller.takePicture();
+      final results = await _apiService.detectObjects(image);
+
+      if (!mounted) return;
 
       setState(() {
-        _detections = detections;
+        _detections = results;
+        _error = null;
       });
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
-        _error = e.toString();
+        _error = 'Detection failed: $e';
       });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      _processing = false;
     }
   }
 
   @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = _cameraController;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('ContextAid'),
@@ -80,83 +149,73 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           children: [
             Expanded(
-              child: _image == null
-                  ? const Center(
-                      child: Text(
-                        'Capture an image to begin',
-                        style: TextStyle(fontSize: 18),
-                      ),
-                    )
-                  : FutureBuilder<Uint8List>(
-                      future: _image!.readAsBytes(),
-                      builder: (context, snapshot) {
-                        if (!snapshot.hasData) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-
-                        return Image.memory(
-                          snapshot.data!,
-                          fit: BoxFit.contain,
-                        );
-                      },
-                    ),
-            ),
-
-            if (_isLoading)
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: CircularProgressIndicator(),
+              flex: 3,
+              child: Center(
+                child: _initializing
+                    ? const CircularProgressIndicator()
+                    : controller != null &&
+                            controller.value.isInitialized
+                        ? AspectRatio(
+                            aspectRatio:
+                                controller.value.aspectRatio,
+                            child: CameraPreview(controller),
+                          )
+                        : Text(
+                            _error ?? 'Camera unavailable',
+                          ),
               ),
-
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _scanning
+                  ? (_processing
+                      ? 'Analyzing scene...'
+                      : 'Live detection running')
+                  : 'Detection paused',
+            ),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.all(8),
                 child: Text(
                   _error!,
-                  style: const TextStyle(
-                    color: Colors.red,
-                  ),
+                  style: const TextStyle(color: Colors.red),
                 ),
               ),
+            Expanded(
+              flex: 2,
+              child: _detections.isEmpty
+                  ? const Center(
+                      child: Text('No objects detected yet'),
+                    )
+                  : ListView.builder(
+                      itemCount: _detections.length,
+                      itemBuilder: (context, index) {
+                        final d = _detections[index];
 
-            if (_detections.isNotEmpty)
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _detections.length,
-                  itemBuilder: (context, index) {
-                    final detection = _detections[index];
-
-                    return ListTile(
-                      leading: const Icon(
-                        Icons.visibility,
-                      ),
-                      title: Text(
-                        detection.className,
-                      ),
-                      subtitle: Text(
-                        'Confidence: '
-                        '${(detection.confidence * 100).toStringAsFixed(1)}%',
-                      ),
-                    );
-                  },
-                ),
-              ),
-
-            const SizedBox(height: 12),
-
+                        return ListTile(
+                          leading: const Icon(Icons.visibility),
+                          title: Text(d.className),
+                          subtitle: Text(
+                            'Confidence: '
+                            '${(d.confidence * 100).toStringAsFixed(1)}%',
+                          ),
+                        );
+                      },
+                    ),
+            ),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _isLoading
+                onPressed: _initializing
                     ? null
-                    : _captureImage,
-                icon: const Icon(
-                  Icons.camera_alt,
+                    : (_scanning
+                        ? _stopScanning
+                        : _startScanning),
+                icon: Icon(
+                  _scanning ? Icons.pause : Icons.play_arrow,
                 ),
-                label: const Text(
-                  'Capture & Detect',
+                label: Text(
+                  _scanning ? 'Pause Detection' : 'Start Detection',
                 ),
               ),
             ),
