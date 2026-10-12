@@ -6,6 +6,7 @@ from detection.detector import ObjectDetector
 from context.context_engine import analyze_context
 from priority.priority_engine import create_alerts
 from ocr.ocr_engine import OCREngine
+from distance.distance_engine import estimate_distance
 
 app = FastAPI(title="ContextAid API")
 app.add_middleware(
@@ -43,8 +44,12 @@ async def detect(file: UploadFile = File(...)):
     raw_detections = detector.detect(image)
 
     contextual_detections = [
+       estimate_distance(
         analyze_context(
             detection,
+            image_width,
+            image_height,
+        ),
             image_width,
             image_height,
         )
