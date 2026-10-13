@@ -38,6 +38,7 @@ dependencies:
   image_picker: ^1.2.3
   camera: ^0.12.1
   flutter_tts: ^4.2.5
+  http_parser: ^4.1.2
 
 dev_dependencies:
   flutter_test:
