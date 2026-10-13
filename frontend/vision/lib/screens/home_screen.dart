@@ -20,7 +20,10 @@ class _HomeScreenState extends State<HomeScreen> {
   final ApiService _apiService = ApiService();
 
   final Map<String, DateTime> _spokenAlerts = {};
-  final Set<String> _spokenTexts = {};
+  final Set<String> _spokenWords = {};
+final Map<String, int> _wordSeen = {};
+DateTime? _lastTextSpokenAt;
+int _emptyTextFrames = 0;
 
   CameraController? _cameraController;
   Timer? _timer;
@@ -146,30 +149,60 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _speakRecognizedText(List<String> texts) async {
     if (!_aiAssistEnabled || _urgentSpeaking) return;
 
-    for (final text in texts) {
-      if (!_aiAssistEnabled || _urgentSpeaking) return;
-
-      final normalized = text.toLowerCase().trim();
-
-      if (normalized.isEmpty || _spokenTexts.contains(normalized)) {
-        continue;
+  // Split into words, drop punctuation and one-letter OCR junk.
+    final words = <String>[];
+    for (final item in texts) {
+      for (final raw in item.split(RegExp(r'\s+'))) {
+        final word = raw
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
+          if (word.length >= 2) words.add(word);
       }
+    }
 
-      _spokenTexts.add(normalized);
-
-      // Prevent the history from growing indefinitely.
-      if (_spokenTexts.length > 200) {
-        _spokenTexts.clear();
-        _spokenTexts.add(normalized);
+  // If text has been gone for a few frames, forget what was read,
+  // so the same text can be read again when it comes back into view.
+    if (words.isEmpty) {
+      _emptyTextFrames++;
+      if (_emptyTextFrames >= 3) {
+        _spokenWords.clear();
+        _wordSeen.clear();
       }
+      return;
+    }
+    _emptyTextFrames = 0;
 
-      try {
-        await _flutterTts
-            .speak('Text detected: $text')
-            .timeout(const Duration(seconds: 15));
-      } catch (e) {
-        debugPrint('TTS error or timeout: $e');
-      }
+  // Count how many frames in a row each word has been seen.
+    final current = words.toSet();
+    _wordSeen.removeWhere((w, _) => !current.contains(w));
+    for (final w in current) {
+      _wordSeen[w] = (_wordSeen[w] ?? 0) + 1;
+    }
+
+  // Cooldown: speak text at most once every 6 seconds.
+    final now = DateTime.now();
+    if (_lastTextSpokenAt != null &&
+      now.difference(_lastTextSpokenAt!).inSeconds < 6) {
+      return;
+    }
+
+  // Only words seen in 2+ frames that have not been read yet.
+    final fresh = words
+      .where((w) => (_wordSeen[w] ?? 0) >= 2 && !_spokenWords.contains(w))
+      .toSet()
+      .toList();
+    if (fresh.isEmpty) return;
+
+    if (_spokenWords.length > 200) _spokenWords.clear();
+    _spokenWords.addAll(fresh);
+    _lastTextSpokenAt = now;
+
+    try {
+      await _flutterTts
+        .speak('Text detected: ${fresh.join(' ')}')
+        .timeout(const Duration(seconds: 15));
+    } catch (e) {
+      debugPrint('TTS error or timeout: $e');
     }
   }
 
@@ -305,7 +338,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!enabled) {
       // Stop optional speech immediately when AI Assist is switched off.
       await _flutterTts.stop();
-      _spokenTexts.clear();
+      _spokenWords.clear();
+      _wordSeen.clear();
       return;
     }
 
